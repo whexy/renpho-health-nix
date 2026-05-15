@@ -2,7 +2,7 @@
 
 Subcommands:
   latest                  Print the most recent measurement as JSON.
-  recent --count K        Print K most recent measurements (json/text/notify).
+  recent --count K        Print K most recent measurements (json or text).
   refresh --out PATH      Fetch and atomically write JSON cache (for systemd).
   waybar  --cache PATH    Read cache only; emit waybar custom-module JSON.
 
@@ -419,24 +419,25 @@ def _trend_class(latest: dict, prev: dict | None) -> str | None:
     return "down" if delta < 0 else "up"
 
 
-def _build_tooltip(latest: dict, prev: dict | None) -> str:
-    bits: list[str] = []
-    if (w := latest.get("weight")) is not None:
-        bits.append(f"Weight: {w:.2f} kg")
-    if (bmi := latest.get("bmi")) is not None:
-        bits.append(f"BMI: {bmi:.1f}")
-    if (bf := latest.get("bodyfat")) is not None:
-        bits.append(f"Body fat: {bf:.1f}%")
-    if (mu := latest.get("muscle")) is not None:
-        bits.append(f"Muscle: {mu:.1f}%")
-    if (wa := latest.get("water")) is not None:
-        bits.append(f"Water: {wa:.1f}%")
-    if ts := latest.get("localCreatedAt"):
-        bits.append(f"At: {ts}")
-    if prev is not None and (pw := prev.get("weight")) is not None:
-        if (w := latest.get("weight")) is not None:
-            bits.append(f"Δ vs previous: {w - pw:+.2f} kg")
-    return "\n".join(bits) if bits else "no data"
+def _pango_escape(s: str) -> str:
+    """Escape the minimal set of chars that have meaning in pango markup."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _build_tooltip(records: list[dict]) -> str:
+    """Render the recent-records table as a pango-marked-up tooltip.
+
+    Rows are wrapped in <tt>...</tt> (monospace) so columns stay aligned
+    regardless of the user's tooltip font. The full block is otherwise
+    bare text — waybar+GTK render \\n as line breaks.
+    """
+    if not records:
+        return "no data yet"
+    lines: list[str] = []
+    for i, rec in enumerate(records):
+        prev = records[i + 1] if i + 1 < len(records) else None
+        lines.append(_pango_escape(_fmt_row(rec, prev)))
+    return "<tt>" + "\n".join(lines) + "</tt>"
 
 
 def cmd_waybar(args: argparse.Namespace) -> int:
@@ -454,7 +455,7 @@ def cmd_waybar(args: argparse.Namespace) -> int:
 
     fmt = _FORMATTERS.get(args.format, _fmt_weight_arrow)
     text = fmt(latest, prev)
-    tooltip = _build_tooltip(latest, prev)
+    tooltip = _build_tooltip(data[: args.summary_count])
     css_class = _trend_class(latest, prev)
 
     age = _cache_age_seconds(cache_path)
@@ -502,9 +503,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--count", "-k", type=int, default=10)
     sp.add_argument(
         "--format",
-        choices=["json", "text", "notify"],
+        choices=["json", "text"],
         default="json",
-        help="Output format. text/notify are aligned multi-line rows.",
+        help="Output format. `text` emits aligned multi-line rows.",
     )
     _add_creds_args(sp)
     _add_debounce(sp)
@@ -522,6 +523,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--format",
         choices=list(_FORMATTERS),
         default="weight-arrow",
+    )
+    sp.add_argument(
+        "--summary-count",
+        type=int,
+        default=5,
+        help="How many recent (debounced) records to show in the hover tooltip.",
     )
     _add_debounce(sp)
     sp.set_defaults(func=cmd_waybar)

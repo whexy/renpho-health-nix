@@ -33,9 +33,9 @@ nix run github:whexy/renpho-health -- recent --count 5
 | Command | Description |
 | --- | --- |
 | `latest [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print the most recent (day-debounced) measurement as JSON. |
-| `recent --count K [--format json\|text\|notify] [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print K most recent measurements. `json` (default) is unchanged; `text`/`notify` emit aligned one-line-per-record rows. |
+| `recent --count K [--format json\|text] [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print K most recent measurements. `json` (default) is unchanged; `text` emits aligned one-line-per-record rows. |
 | `refresh --out PATH [--count K] [--creds-file PATH]` | Atomically write JSON cache. Always writes raw records (no debounce). Used by the systemd timer. |
-| `waybar --cache PATH [--format weight-arrow\|weight-bmi\|weight] [--debounce day\|none]` | Read cache and emit one line of waybar custom-module JSON. Never touches the network; never errors out. |
+| `waybar --cache PATH [--format weight-arrow\|weight-bmi\|weight] [--summary-count K] [--debounce day\|none]` | Read cache and emit one line of waybar custom-module JSON. Tooltip contains the K most recent (debounced) records as a pango-marked-up table. Never touches the network; never errors out. |
 
 ### Same-day debounce
 
@@ -114,9 +114,10 @@ The agenix secret should decrypt to a file containing
 | `position` | `"right"` | Which `modules-<position>` list to append to. |
 | `interval` | `300` | Seconds between cache polls (local FS). |
 | `format` | `"weight-arrow"` | `weight-arrow`, `weight-bmi`, or `weight`. |
-| `summaryCount` | `5` | How many recent (day-debounced) records to show in the click-to-show notification. |
+| `summaryCount` | `5` | How many recent (day-debounced) records to show in the hover tooltip. |
 
-Clicking the pill pops up a notification with the most recent measurements:
+Hovering the pill reveals a tooltip with the most recent measurements as
+a small attached window (same UX as the clock's calendar tooltip):
 
 ```
 2026-05-15   102.2kg  BMI 30.9  BF 26.7%  ▲2.1
@@ -126,7 +127,9 @@ Clicking the pill pops up a notification with the most recent measurements:
 2026-03-26   100.4kg  BMI 30.3  BF 25.9%    ─
 ```
 
-Trend arrow shows the delta vs. the next-older row.
+The tooltip is wrapped in `<tt>` (pango monospace) so columns stay aligned
+regardless of your tooltip font. Trend arrow shows the delta vs. the
+next-older row.
 
 Failure handling: a failed refresh leaves the previous cache untouched. Once
 the cache is older than 36 hours the waybar pill is rendered with the

@@ -57,7 +57,7 @@ in
       default = 5;
       description = ''
         How many recent (day-debounced) records to show in the
-        click-to-show notification.
+        hover tooltip.
       '';
     };
   };
@@ -74,15 +74,14 @@ in
       "modules-${cfg.position}" = lib.mkAfter [ "custom/renpho" ];
 
       "custom/renpho" = {
-        exec = "${lib.getExe hcfg.package} waybar --cache ${hcfg.cachePath} --format ${cfg.format}";
+        # The waybar subcommand emits both the pill text and a pango-marked-up
+        # tooltip containing the K most recent (debounced) records. Hover the
+        # pill to see the table — same UX as the clock's calendar tooltip.
+        exec = "${lib.getExe hcfg.package} waybar --cache ${hcfg.cachePath} --format ${cfg.format} --summary-count ${toString cfg.summaryCount}";
         interval = cfg.interval;
         return-type = "json";
         format = "{}";
         tooltip = true;
-        # Show K most recent (day-debounced) measurements as a notification.
-        # `--format notify` emits aligned text rows; notify-send adds the
-        # title. -t 10000 keeps it on screen long enough to read 5+ lines.
-        on-click = "${lib.getExe hcfg.package} recent --cache ${hcfg.cachePath} --count ${toString cfg.summaryCount} --format notify | ${pkgs.libnotify}/bin/notify-send -t 10000 'Renpho — recent measurements' -";
       };
     };
 
