@@ -51,6 +51,15 @@ in
       default = "weight-arrow";
       description = "Pill text style.";
     };
+
+    summaryCount = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 5;
+      description = ''
+        How many recent (day-debounced) records to show in the
+        click-to-show notification.
+      '';
+    };
   };
 
   config = lib.mkIf (cfg.enable && isLinux) {
@@ -70,7 +79,10 @@ in
         return-type = "json";
         format = "{}";
         tooltip = true;
-        on-click = "${lib.getExe hcfg.package} latest --cache ${hcfg.cachePath} | ${pkgs.libnotify}/bin/notify-send 'Renpho' -";
+        # Show K most recent (day-debounced) measurements as a notification.
+        # `--format notify` emits aligned text rows; notify-send adds the
+        # title. -t 10000 keeps it on screen long enough to read 5+ lines.
+        on-click = "${lib.getExe hcfg.package} recent --cache ${hcfg.cachePath} --count ${toString cfg.summaryCount} --format notify | ${pkgs.libnotify}/bin/notify-send -t 10000 'Renpho — recent measurements' -";
       };
     };
 

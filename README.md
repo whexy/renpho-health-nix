@@ -32,10 +32,22 @@ nix run github:whexy/renpho-health -- recent --count 5
 
 | Command | Description |
 | --- | --- |
-| `latest [--cache PATH \| --creds-file PATH]` | Print the most recent measurement as JSON. |
-| `recent --count K [--cache PATH \| --creds-file PATH]` | Print K most recent measurements as a JSON array. |
-| `refresh --out PATH [--count K] [--creds-file PATH]` | Atomically write JSON cache. Used by the systemd timer. |
-| `waybar --cache PATH [--format weight-arrow\|weight-bmi\|weight]` | Read cache and emit one line of waybar custom-module JSON. Never touches the network; never errors out. |
+| `latest [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print the most recent (day-debounced) measurement as JSON. |
+| `recent --count K [--format json\|text\|notify] [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print K most recent measurements. `json` (default) is unchanged; `text`/`notify` emit aligned one-line-per-record rows. |
+| `refresh --out PATH [--count K] [--creds-file PATH]` | Atomically write JSON cache. Always writes raw records (no debounce). Used by the systemd timer. |
+| `waybar --cache PATH [--format weight-arrow\|weight-bmi\|weight] [--debounce day\|none]` | Read cache and emit one line of waybar custom-module JSON. Never touches the network; never errors out. |
+
+### Same-day debounce
+
+By default (`--debounce day`), records taken on the same calendar day are
+collapsed into a single daily entry whose numeric fields (weight, BMI,
+body fat, muscle, water, …) are the **mean** of that day's raw records.
+Zero-valued fields are excluded from the mean since Renpho stores `0` for
+"not measured". Pass `--debounce none` to inspect raw records.
+
+The cache file itself is **always raw** — debouncing happens only at read
+time. This keeps the cache faithful and lets us change the grouping logic
+without re-fetching.
 
 ### Credentials resolution order
 
@@ -102,6 +114,19 @@ The agenix secret should decrypt to a file containing
 | `position` | `"right"` | Which `modules-<position>` list to append to. |
 | `interval` | `300` | Seconds between cache polls (local FS). |
 | `format` | `"weight-arrow"` | `weight-arrow`, `weight-bmi`, or `weight`. |
+| `summaryCount` | `5` | How many recent (day-debounced) records to show in the click-to-show notification. |
+
+Clicking the pill pops up a notification with the most recent measurements:
+
+```
+2026-05-15   102.2kg  BMI 30.9  BF 26.7%  ▲2.1
+2026-04-29   100.1kg  BMI 30.2  BF 25.7%  ▼0.6
+2026-04-21   100.7kg  BMI 30.4  BF 26.0%  ▼1.1
+2026-04-20   101.8kg  BMI 30.7  BF 26.5%  ▲1.4
+2026-03-26   100.4kg  BMI 30.3  BF 25.9%    ─
+```
+
+Trend arrow shows the delta vs. the next-older row.
 
 Failure handling: a failed refresh leaves the previous cache untouched. Once
 the cache is older than 36 hours the waybar pill is rendered with the
