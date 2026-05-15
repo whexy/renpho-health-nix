@@ -33,12 +33,17 @@ in
     };
 
     credsFile = lib.mkOption {
-      type = lib.types.path;
+      type = lib.types.str;
       example = lib.literalExpression "config.age.secrets.renpho-creds.path";
       description = ''
         Path to a KEY=VALUE file containing `RENPHO_EMAIL=` and
         `RENPHO_PASSWORD=` lines. Typically pointed at an agenix or
         sops-nix decrypted secret.
+
+        Type is `str` (not `path`) because agenix on home-manager produces
+        runtime-expanded values like `''${XDG_RUNTIME_DIR}/agenix/<name>`,
+        which are not absolute paths at eval time. The shell expansion is
+        performed by systemd when the service runs.
       '';
     };
 
@@ -79,18 +84,17 @@ in
       };
       Service = {
         Type = "oneshot";
+        # ExecStart is intentionally a plain (unquoted) string so that
+        # systemd performs `${VAR}` expansion on cfg.credsFile, which is
+        # typically a path containing `${XDG_RUNTIME_DIR}` (agenix-HM
+        # convention). lib.escapeShellArgs would single-quote each arg
+        # and suppress that expansion. All values inserted here are
+        # space-free (Nix store paths, integers, and runtime-resolved
+        # paths under known directories).
+        #
         # Atomic write in the CLI keeps the prior cache intact on failure.
         # No Restart= here: the timer will retry on the next cycle.
-        ExecStart = lib.escapeShellArgs [
-          (lib.getExe cfg.package)
-          "refresh"
-          "--out"
-          cfg.cachePath
-          "--count"
-          (toString cfg.count)
-          "--creds-file"
-          (toString cfg.credsFile)
-        ];
+        ExecStart = "${lib.getExe cfg.package} refresh --out ${cfg.cachePath} --count ${toString cfg.count} --creds-file ${cfg.credsFile}";
       };
     };
 
