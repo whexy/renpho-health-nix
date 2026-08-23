@@ -3,15 +3,12 @@
 Subcommands:
   latest                  Print the most recent measurement as JSON.
   recent --count K        Print K most recent measurements (json or text).
-  refresh --out PATH      Fetch and atomically write JSON cache (for systemd).
-  waybar  --cache PATH    Read cache only; emit waybar custom-module JSON.
+  refresh --out PATH      Fetch and atomically write a JSON cache.
 
 Credentials (for `latest` / `recent` / `refresh`):
   --creds-file PATH    KEY=VALUE file with RENPHO_EMAIL and RENPHO_PASSWORD
   $RENPHO_CREDS_FILE   same, as env var
   $RENPHO_EMAIL + $RENPHO_PASSWORD   direct env vars
-
-`waybar` never touches the network; it only reads `--cache`.
 
 Debouncing: by default (`--debounce day`) records taken on the same
 calendar day are collapsed to a single daily entry whose numeric fields
@@ -27,12 +24,8 @@ import json
 import os
 import sys
 import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-
-# 36 h: any cache older than this is rendered with .stale CSS class
-STALE_AFTER_SECONDS = 36 * 60 * 60
 
 # Numeric fields whose mean is taken when collapsing same-day records.
 # Excluded: identifiers, flags, raw timestamps, and one-off measurements
@@ -102,8 +95,7 @@ def _load_credentials(creds_file: str | None) -> tuple[str, str]:
 
 def _fetch_measurements(email: str, password: str) -> list[dict]:
     """Log into Renpho and return all measurements sorted newest-first."""
-    # Imported lazily so `waybar` subcommand (which never needs network) still
-    # works even if the renpho package is somehow unavailable.
+    # Imported lazily so cache-only CLI queries do not load the network client.
     from renpho import RenphoAPIError, RenphoClient  # type: ignore
 
     client = RenphoClient(email, password)
@@ -150,13 +142,6 @@ def _atomic_write_json(path: Path, data: object) -> None:
         except OSError:
             pass
         raise
-
-
-def _cache_age_seconds(cache_path: Path) -> float | None:
-    try:
-        return time.time() - cache_path.stat().st_mtime
-    except OSError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +314,6 @@ def cmd_recent(args: argparse.Namespace) -> int:
         print(json.dumps(sliced, indent=2, sort_keys=True))
         return 0
 
-    # text / notify: same content; notify-send adds its own title.
     print(_render_text(sliced))
     return 0
 
@@ -355,119 +339,6 @@ def cmd_refresh(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand: waybar
-# ---------------------------------------------------------------------------
-
-# Nerd Font icon for body/weight ("nf-md-scale")
-ICON = "\U000f04c5"
-
-
-def _waybar_emit(text: str, tooltip: str, css_class: str | None = None) -> None:
-    out: dict[str, object] = {"text": text, "tooltip": tooltip}
-    if css_class:
-        out["class"] = css_class
-    print(json.dumps(out))
-
-
-def _fmt_weight_arrow(latest: dict, prev: dict | None) -> str:
-    w = latest.get("weight")
-    if w is None:
-        return f"{ICON} ?"
-    if prev is None or prev.get("weight") is None:
-        return f"{ICON} {w:.1f}kg"
-    delta = w - prev["weight"]
-    if abs(delta) < 0.05:
-        arrow = "→"
-    elif delta < 0:
-        arrow = "▼"
-    else:
-        arrow = "▲"
-    return f"{ICON} {w:.1f}kg {arrow}{abs(delta):.1f}"
-
-
-def _fmt_weight_bmi(latest: dict, _prev: dict | None) -> str:
-    w = latest.get("weight")
-    bmi = latest.get("bmi")
-    if w is None:
-        return f"{ICON} ?"
-    if bmi is None:
-        return f"{ICON} {w:.1f}kg"
-    return f"{ICON} {w:.1f}kg \u2022 {bmi:.1f}"
-
-
-def _fmt_weight(latest: dict, _prev: dict | None) -> str:
-    w = latest.get("weight")
-    return f"{ICON} {w:.1f}kg" if w is not None else f"{ICON} ?"
-
-
-_FORMATTERS = {
-    "weight-arrow": _fmt_weight_arrow,
-    "weight-bmi": _fmt_weight_bmi,
-    "weight": _fmt_weight,
-}
-
-
-def _trend_class(latest: dict, prev: dict | None) -> str | None:
-    if prev is None:
-        return None
-    a, b = latest.get("weight"), prev.get("weight")
-    if a is None or b is None:
-        return None
-    delta = a - b
-    if abs(delta) < 0.05:
-        return None
-    return "down" if delta < 0 else "up"
-
-
-def _pango_escape(s: str) -> str:
-    """Escape the minimal set of chars that have meaning in pango markup."""
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _build_tooltip(records: list[dict]) -> str:
-    """Render the recent-records table as a pango-marked-up tooltip.
-
-    Rows are wrapped in <tt>...</tt> (monospace) so columns stay aligned
-    regardless of the user's tooltip font. The full block is otherwise
-    bare text — waybar+GTK render \\n as line breaks.
-    """
-    if not records:
-        return "no data yet"
-    lines: list[str] = []
-    for i, rec in enumerate(records):
-        prev = records[i + 1] if i + 1 < len(records) else None
-        lines.append(_pango_escape(_fmt_row(rec, prev)))
-    return "<tt>" + "\n".join(lines) + "</tt>"
-
-
-def cmd_waybar(args: argparse.Namespace) -> int:
-    """Emit one line of waybar custom-module JSON. Never errors out."""
-    cache_path = Path(args.cache)
-    raw = _read_cache(cache_path)
-
-    if not raw:
-        _waybar_emit(f"{ICON} \u2026", "no data yet", "stale")
-        return 0
-
-    data = _apply_debounce(raw, args.debounce)
-    latest = data[0]
-    prev = data[1] if len(data) > 1 else None
-
-    fmt = _FORMATTERS.get(args.format, _fmt_weight_arrow)
-    text = fmt(latest, prev)
-    tooltip = _build_tooltip(data[: args.summary_count])
-    css_class = _trend_class(latest, prev)
-
-    age = _cache_age_seconds(cache_path)
-    if age is not None and age > STALE_AFTER_SECONDS:
-        css_class = "stale"
-        tooltip = f"[cache {int(age // 3600)}h old]\n{tooltip}"
-
-    _waybar_emit(text, tooltip, css_class)
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -475,7 +346,7 @@ def cmd_waybar(args: argparse.Namespace) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="renpho-health",
-        description="Fetch Renpho scale data; serve a waybar pill.",
+        description="Fetch and query Renpho scale data.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -516,22 +387,6 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--count", "-k", type=int, default=30, help="Max records to keep.")
     sp.add_argument("--creds-file", help="KEY=VALUE creds file")
     sp.set_defaults(func=cmd_refresh)
-
-    sp = sub.add_parser("waybar", help="Emit a waybar custom-module JSON line.")
-    sp.add_argument("--cache", required=True, help="Path to JSON cache.")
-    sp.add_argument(
-        "--format",
-        choices=list(_FORMATTERS),
-        default="weight-arrow",
-    )
-    sp.add_argument(
-        "--summary-count",
-        type=int,
-        default=5,
-        help="How many recent (debounced) records to show in the hover tooltip.",
-    )
-    _add_debounce(sp)
-    sp.set_defaults(func=cmd_waybar)
 
     return p
 

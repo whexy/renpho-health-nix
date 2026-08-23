@@ -27,8 +27,8 @@ pkgs.python3Packages.buildPythonApplication {
   pythonImportsCheck = [ "renpho_health" ];
 
   meta = {
-    description = "CLI + home-manager module for fetching Renpho scale data";
-    homepage = "https://github.com/whexy/renpho-health";
+    description = "CLI for fetching and querying Renpho scale data";
+    homepage = "https://github.com/whexy/renpho-health-nix";
     license = pkgs.lib.licenses.mit;
     mainProgram = "renpho-health";
   };

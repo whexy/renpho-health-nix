@@ -1,9 +1,8 @@
 # Home-manager module: services.renpho-health
 #
-# Manages a systemd user timer that refreshes a JSON cache of recent Renpho
-# scale measurements. On Darwin this module is a true no-op (the entire
-# `config` block is gated on isLinux), so the same `imports` list can be
-# shared across mixed Linux/Darwin fleets.
+# Manages a background job that refreshes a JSON cache of recent Renpho
+# scale measurements: a systemd user timer on Linux and a launchd agent on
+# Darwin.
 #
 # Blueprint exposes this as `homeModules.default` (filename `default.nix`
 # inside `modules/home/`). The outer function-form takes `flake` so the
@@ -20,10 +19,18 @@
 let
   cfg = config.services.renpho-health;
   isLinux = pkgs.stdenv.hostPlatform.isLinux;
+  isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
+
+  refreshScript = pkgs.writeShellScript "renpho-health-refresh" ''
+    exec ${lib.getExe cfg.package} refresh \
+      --out ${lib.escapeShellArg cfg.cachePath} \
+      --count ${toString cfg.count} \
+      --creds-file "${cfg.credsFile}"
+  '';
 in
 {
   options.services.renpho-health = {
-    enable = lib.mkEnableOption "Renpho scale data refresh (Linux user service)";
+    enable = lib.mkEnableOption "Renpho scale data refresh service";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -40,10 +47,11 @@ in
         `RENPHO_PASSWORD=` lines. Typically pointed at an agenix or
         sops-nix decrypted secret.
 
-        Type is `str` (not `path`) because agenix on home-manager produces
+        Type is `str` (not `path`) because agenix on home-manager can produce
         runtime-expanded values like `''${XDG_RUNTIME_DIR}/agenix/<name>`,
-        which are not absolute paths at eval time. The shell expansion is
-        performed by systemd when the service runs.
+        which are not absolute paths at eval time. The Linux service lets
+        systemd expand that value; the Darwin launchd wrapper lets the shell
+        expand it.
       '';
     };
 
@@ -63,42 +71,39 @@ in
     interval = lib.mkOption {
       type = lib.types.str;
       default = "1h";
-      description = "systemd `OnUnitActiveSec=` value for the refresh timer.";
+      description = "systemd `OnUnitActiveSec=` value for the Linux refresh timer.";
     };
 
     onBoot = lib.mkOption {
       type = lib.types.str;
       default = "2min";
-      description = "systemd `OnBootSec=` value: delay before the first refresh after login.";
+      description = "systemd `OnBootSec=` value: delay before the first Linux refresh after login.";
+    };
+
+    darwinInterval = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 3600;
+      description = "Seconds between refreshes for the Darwin launchd agent.";
     };
   };
 
-  # Strictly Linux. Darwin imports become inert.
-  config = lib.mkIf (cfg.enable && isLinux) {
+  config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    systemd.user.services.renpho-health-refresh = {
+    systemd.user.services.renpho-health-refresh = lib.mkIf isLinux {
       Unit = {
         Description = "Refresh Renpho health data cache";
-        Documentation = [ "https://github.com/whexy/renpho-health" ];
+        Documentation = [ "https://github.com/whexy/renpho-health-nix" ];
       };
       Service = {
         Type = "oneshot";
-        # ExecStart is intentionally a plain (unquoted) string so that
-        # systemd performs `${VAR}` expansion on cfg.credsFile, which is
-        # typically a path containing `${XDG_RUNTIME_DIR}` (agenix-HM
-        # convention). lib.escapeShellArgs would single-quote each arg
-        # and suppress that expansion. All values inserted here are
-        # space-free (Nix store paths, integers, and runtime-resolved
-        # paths under known directories).
-        #
-        # Atomic write in the CLI keeps the prior cache intact on failure.
-        # No Restart= here: the timer will retry on the next cycle.
+        # ExecStart remains a plain string so systemd can expand agenix-HM
+        # runtime paths such as `${XDG_RUNTIME_DIR}/agenix/renpho-creds`.
         ExecStart = "${lib.getExe cfg.package} refresh --out ${cfg.cachePath} --count ${toString cfg.count} --creds-file ${cfg.credsFile}";
       };
     };
 
-    systemd.user.timers.renpho-health-refresh = {
+    systemd.user.timers.renpho-health-refresh = lib.mkIf isLinux {
       Unit.Description = "Periodic Renpho health refresh";
       Timer = {
         OnBootSec = cfg.onBoot;
@@ -106,6 +111,18 @@ in
         Persistent = true;
       };
       Install.WantedBy = [ "timers.target" ];
+    };
+
+    launchd.agents.renpho-health-refresh = lib.mkIf isDarwin {
+      enable = true;
+      config = {
+        ProgramArguments = [ "${refreshScript}" ];
+        RunAtLoad = true;
+        StartInterval = cfg.darwinInterval;
+        ProcessType = "Background";
+        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/renpho-health-refresh.log";
+        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/renpho-health-refresh.err.log";
+      };
     };
   };
 }

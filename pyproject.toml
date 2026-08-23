@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "renpho-health"
 version = "0.1.0"
-description = "CLI + home-manager module for fetching Renpho scale data"
+description = "CLI for fetching and querying Renpho scale data"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

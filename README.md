@@ -5,13 +5,13 @@ data. Built on top of the unofficial
 [`renpho-api`](https://github.com/danvaneijck/renpho-api) Python library and
 exposed as a Nix flake.
 
-Two consumers:
-
-- **CLI** — `renpho-health {latest,recent,refresh,waybar}` for ad-hoc use or
+- **CLI** — `renpho-health {latest,recent,refresh}` for ad-hoc use and
   scripting.
-- **Home-manager module** — runs a user-level systemd timer that refreshes a
-  JSON cache hourly, plus an optional [waybar](https://github.com/Alexays/Waybar)
-  pill that displays weight + trend.
+- **Home-manager module** — runs a user-level systemd timer on Linux or a
+  launchd agent on Darwin to refresh a JSON cache hourly.
+
+Status-bar rendering intentionally lives in the consumer's panel
+configuration rather than this core data/query project.
 
 ## Quick start (CLI)
 
@@ -35,7 +35,6 @@ nix run github:whexy/renpho-health -- recent --count 5
 | `latest [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print the most recent (day-debounced) measurement as JSON. |
 | `recent --count K [--format json\|text] [--cache PATH \| --creds-file PATH] [--debounce day\|none]` | Print K most recent measurements. `json` (default) is unchanged; `text` emits aligned one-line-per-record rows. |
 | `refresh --out PATH [--count K] [--creds-file PATH]` | Atomically write JSON cache. Always writes raw records (no debounce). Used by the systemd timer. |
-| `waybar --cache PATH [--format weight-arrow\|weight-bmi\|weight] [--summary-count K] [--debounce day\|none]` | Read cache and emit one line of waybar custom-module JSON. Tooltip contains the K most recent (debounced) records as a pango-marked-up table. Never touches the network; never errors out. |
 
 ### Same-day debounce
 
@@ -68,7 +67,7 @@ Add as a flake input:
 
 ```nix
 inputs.renpho-health = {
-  url = "github:whexy/renpho-health";
+  url = "github:whexy/renpho-health-nix";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
@@ -78,16 +77,13 @@ Then in your home-manager config:
 ```nix
 {
   imports = [
-    inputs.renpho-health.homeModules.default   # timer + cache
-    inputs.renpho-health.homeModules.waybar    # waybar pill (optional)
+    inputs.renpho-health.homeModules.default
   ];
 
   services.renpho-health = {
     enable    = true;
     credsFile = config.age.secrets.renpho-creds.path;  # or any KEY=VALUE file
   };
-
-  programs.waybar.renpho.enable = true;
 }
 ```
 
@@ -103,43 +99,11 @@ The agenix secret should decrypt to a file containing
 | `credsFile` | _required_ | Path to KEY=VALUE creds file. |
 | `cachePath` | `$XDG_STATE_HOME/renpho/data.json` | Where to write the JSON cache. |
 | `count` | `30` | Max measurements retained in the cache. |
-| `interval` | `"1h"` | systemd `OnUnitActiveSec`. |
-| `onBoot` | `"2min"` | systemd `OnBootSec`. |
+| `interval` | `"1h"` | systemd `OnUnitActiveSec` on Linux. |
+| `onBoot` | `"2min"` | systemd `OnBootSec` on Linux. |
+| `darwinInterval` | `3600` | launchd refresh interval in seconds on Darwin. |
 
-### `programs.waybar.renpho` options
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `enable` | `false` | Add the renpho pill to waybar. |
-| `position` | `"right"` | Which `modules-<position>` list to append to. |
-| `interval` | `300` | Seconds between cache polls (local FS). |
-| `format` | `"weight-arrow"` | `weight-arrow`, `weight-bmi`, or `weight`. |
-| `summaryCount` | `5` | How many recent (day-debounced) records to show in the hover tooltip. |
-
-Hovering the pill reveals a tooltip with the most recent measurements as
-a small attached window (same UX as the clock's calendar tooltip):
-
-```
-2026-05-15   102.2kg  BMI 30.9  BF 26.7%  ▲2.1
-2026-04-29   100.1kg  BMI 30.2  BF 25.7%  ▼0.6
-2026-04-21   100.7kg  BMI 30.4  BF 26.0%  ▼1.1
-2026-04-20   101.8kg  BMI 30.7  BF 26.5%  ▲1.4
-2026-03-26   100.4kg  BMI 30.3  BF 25.9%    ─
-```
-
-The tooltip is wrapped in `<tt>` (pango monospace) so columns stay aligned
-regardless of your tooltip font. Trend arrow shows the delta vs. the
-next-older row.
-
-Failure handling: a failed refresh leaves the previous cache untouched. Once
-the cache is older than 36 hours the waybar pill is rendered with the
-`.stale` class (gray).
-
-### Darwin
-
-The `services.renpho-health` and `programs.waybar.renpho` modules are no-ops
-on Darwin: `config = lib.mkIf (cfg.enable && isLinux) {...}`. You can still
-use the CLI ad-hoc via `nix run`.
+Failure handling: a failed refresh leaves the previous cache untouched.
 
 ## Hacking
 

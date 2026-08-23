@@ -1,5 +1,5 @@
 {
-  description = "Renpho Health: CLI + home-manager module for Renpho scale data";
+  description = "Renpho Health: CLI and cache refresh service for Renpho scale data";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
