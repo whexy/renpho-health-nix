@@ -7,8 +7,10 @@
 }:
 
 pkgs.python3Packages.buildPythonPackage {
-  pname = "renpho";
-  version = "0.1.0-unstable";
+  # The name and version in upstream's pyproject.toml. nixpkgs' metadata check
+  # fails the build when the derivation's differ from the built package's.
+  pname = "renpho-api";
+  version = "0.1.0";
   pyproject = true;
   src = inputs.renpho-api;
 
